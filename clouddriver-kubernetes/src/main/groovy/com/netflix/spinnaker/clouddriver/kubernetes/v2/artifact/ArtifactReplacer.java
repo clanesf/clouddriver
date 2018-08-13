@@ -44,6 +44,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -64,9 +65,9 @@ public class ArtifactReplacer {
     return this;
   }
 
-  private static List<Artifact> filterKubernetesArtifactsByNamespace(String namespace, List<Artifact> artifacts) {
+  private static List<Artifact> filterKubernetesArtifactsByNamespaceAndAccount(String namespace, String account, List<Artifact> artifacts) {
     return artifacts.stream()
-        // Keep artifacts that either aren't k8s, or are in the same namespace as our manifest
+        // Keep artifacts that either aren't k8s, or are in the same namespace and account as our manifest
         .filter(a -> {
           String type = a.getType();
           if (StringUtils.isEmpty(type)) {
@@ -78,20 +79,28 @@ public class ArtifactReplacer {
             return true;
           }
 
+          boolean locationMatches;
           String location = a.getLocation();
           if (StringUtils.isEmpty(location)) {
-            return StringUtils.isEmpty(namespace);
+            locationMatches = StringUtils.isEmpty(namespace);
           } else {
-            return location.equals(namespace);
+            locationMatches = location.equals(namespace);
           }
+
+          boolean accountMatches;
+          String artifactAccount = KubernetesArtifactConverter.getAccount(a);
+          // If the artifact fails to provide an account, we'll assume this was unintentional and match anyways
+          accountMatches = StringUtils.isEmpty(artifactAccount) || artifactAccount.equals(account);
+
+          return accountMatches && locationMatches;
         })
         .collect(Collectors.toList());
   }
 
-  public ReplaceResult replaceAll(KubernetesManifest input, List<Artifact> artifacts, String namespace) {
+  public ReplaceResult replaceAll(KubernetesManifest input, List<Artifact> artifacts, String namespace, String account) {
     log.debug("Doing replacement on {} using {}", input, artifacts);
     // final to use in below lambda
-    final List<Artifact> finalArtifacts = filterKubernetesArtifactsByNamespace(namespace, artifacts);
+    final List<Artifact> finalArtifacts = filterKubernetesArtifactsByNamespaceAndAccount(namespace, account, artifacts);
     DocumentContext document;
     try {
       document = JsonPath.using(configuration).parse(mapper.writeValueAsString(input));
@@ -162,6 +171,7 @@ public class ArtifactReplacer {
     private final String replacePath;
     private final String findPath;
     private final Pattern namePattern; // the first group should be the artifact name
+    private final Function<String, String> nameFromReference;
 
     @Getter
     private final ArtifactTypes type;
@@ -184,13 +194,15 @@ public class ArtifactReplacer {
     }
 
     String getNameFromReference(String reference) {
-      if (namePattern == null) {
-        return null;
-      }
-
-      Matcher m = namePattern.matcher(reference);
-      if (m.find() && m.groupCount() > 0 && StringUtils.isNotEmpty(m.group(1))) {
-        return m.group(1);
+      if (nameFromReference != null) {
+        return nameFromReference.apply(reference);
+      } else if (namePattern != null) {
+        Matcher m = namePattern.matcher(reference);
+        if (m.find() && m.groupCount() > 0 && StringUtils.isNotEmpty(m.group(1))) {
+          return m.group(1);
+        } else {
+          return null;
+        }
       } else {
         return null;
       }
@@ -206,6 +218,8 @@ public class ArtifactReplacer {
       }
 
       String jsonPath = processPath(replacePath, artifact);
+
+      log.debug("Processed jsonPath == {}", jsonPath);
 
       Object get;
       try {

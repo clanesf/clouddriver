@@ -40,13 +40,32 @@ public class ArtifactReplacerFactory {
 
   public static Replacer dockerImageReplacer() {
     return Replacer.builder()
-        .replacePath("$..spec.template.spec.containers.[?( @.image == \"{%name%}\" )].image")
-        .findPath("$..spec.template.spec.containers.*.image")
-        .namePattern(DOCKER_IMAGE_REFERENCE_PATTERN)
+        .replacePath("$..spec.template.spec['containers', 'initContainers'].[?( @.image == \"{%name%}\" )].image")
+        .findPath("$..spec.template.spec['containers', 'initContainers'].*.image")
+        .nameFromReference(ref -> {
+          int atIndex = ref.indexOf('@');
+          // @ can only show up in image references denoting a digest
+          // https://github.com/docker/distribution/blob/95daa793b83a21656fe6c13e6d5cf1c3999108c7/reference/regexp.go#L70
+          if (atIndex >= 0) {
+            return ref.substring(0, atIndex);
+          }
+
+          // : can be used to denote a port, part of a digest (already matched) or a tag
+          // https://github.com/docker/distribution/blob/95daa793b83a21656fe6c13e6d5cf1c3999108c7/reference/regexp.go#L69
+          int lastColonIndex = ref.lastIndexOf(':');
+
+          if (lastColonIndex < 0) {
+            return ref;
+          }
+
+          // we don't need to check if this is a tag, or a port. ports will be matched lazily if they are numeric, and are treated as tags first:
+          // https://github.com/docker/distribution/blob/95daa793b83a21656fe6c13e6d5cf1c3999108c7/reference/regexp.go#L34
+          return ref.substring(0, lastColonIndex);
+        })
         .type(ArtifactTypes.DOCKER_IMAGE)
         .build();
   }
-
+  
   public static Replacer configMapVolumeReplacer() {
     return Replacer.builder()
         .replacePath("$..spec.template.spec.volumes.[?( @.configMap.name == \"{%name%}\" )].configMap.name")
@@ -65,33 +84,49 @@ public class ArtifactReplacerFactory {
 
   public static Replacer configMapKeyValueFromReplacer() {
     return Replacer.builder()
-        .replacePath("$..spec.template.spec.containers.*.env.[?( @.valueFrom.configMapKeyRef.name == \"{%name%}\" )].valueFrom.configMapKeyRef.name")
-        .findPath("$..spec.template.spec.containers.*.env.*.valueFrom.configMapKeyRef.name")
+        .replacePath("$..spec.template.spec['containers', 'initContainers'].*.env.[?( @.valueFrom.configMapKeyRef.name == \"{%name%}\" )].valueFrom.configMapKeyRef.name")
+        .findPath("$..spec.template.spec['containers', 'initContainers'].*.env.*.valueFrom.configMapKeyRef.name")
         .type(ArtifactTypes.KUBERNETES_CONFIG_MAP)
         .build();
   }
 
   public static Replacer secretKeyValueFromReplacer() {
     return Replacer.builder()
-        .replacePath("$..spec.template.spec.containers.*.env.[?( @.valueFrom.secretKeyRef.name == \"{%name%}\" )].valueFrom.secretKeyRef.name")
-        .findPath("$..spec.template.spec.containers.*.env.*.valueFrom.secretKeyRef.name")
+        .replacePath("$..spec.template.spec['containers', 'initContainers'].*.env.[?( @.valueFrom.secretKeyRef.name == \"{%name%}\" )].valueFrom.secretKeyRef.name")
+        .findPath("$..spec.template.spec['containers', 'initContainers'].*.env.*.valueFrom.secretKeyRef.name")
         .type(ArtifactTypes.KUBERNETES_SECRET)
         .build();
   }
 
   public static Replacer configMapEnvFromReplacer() {
     return Replacer.builder()
-        .replacePath("$..spec.template.spec.containers.*.envFrom.[?( @.configMapRef.name == \"{%name%}\" )].configMapRef.name")
-        .findPath("$..spec.template.spec.containers.*.envFrom.*.configMapRef.name")
+        .replacePath("$..spec.template.spec['containers', 'initContainers'].*.envFrom.[?( @.configMapRef.name == \"{%name%}\" )].configMapRef.name")
+        .findPath("$..spec.template.spec['containers', 'initContainers'].*.envFrom.*.configMapRef.name")
         .type(ArtifactTypes.KUBERNETES_CONFIG_MAP)
         .build();
   }
 
   public static Replacer secretEnvFromReplacer() {
     return Replacer.builder()
-        .replacePath("$..spec.template.spec.containers.*.envFrom.[?( @.secretRef.name == \"{%name%}\" )].secretRef.name")
-        .findPath("$..spec.template.spec.containers.*.envFrom.*.secretRef.name")
+        .replacePath("$..spec.template.spec['containers', 'initContainers'].*.envFrom.[?( @.secretRef.name == \"{%name%}\" )].secretRef.name")
+        .findPath("$..spec.template.spec['containers', 'initContainers'].*.envFrom.*.secretRef.name")
         .type(ArtifactTypes.KUBERNETES_SECRET)
+        .build();
+  }
+
+  public static Replacer hpaDeploymentReplacer() {
+    return Replacer.builder()
+        .replacePath("$[?( (@.spec.scaleTargetRef.kind == \"Deployment\" || @.spec.scaleTargetRef.kind == \"deployment\") && @.spec.scaleTargetRef.name == \"{%name%}\" )].spec.scaleTargetRef.name")
+        .findPath("$[?( @.spec.scaleTargetRef.kind == \"Deployment\" || @.spec.scaleTargetRef.kind == \"deployment\" )].spec.scaleTargetRef.name")
+        .type(ArtifactTypes.KUBERNETES_DEPLOYMENT)
+        .build();
+  }
+
+  public static Replacer hpaReplicaSetReplacer() {
+    return Replacer.builder()
+        .replacePath("$[?( (@.spec.scaleTargetRef.kind == \"ReplicaSet\" || @.spec.scaleTargetRef.kind == \"replicaSet\") && @.spec.scaleTargetRef.name == \"{%name%}\" )].spec.scaleTargetRef.name")
+        .findPath("$[?( @.spec.scaleTargetRef.kind == \"ReplicaSet\" || @.spec.scaleTargetRef.kind == \"replicaSet\" )].spec.scaleTargetRef.name")
+        .type(ArtifactTypes.KUBERNETES_REPLICA_SET)
         .build();
   }
 }

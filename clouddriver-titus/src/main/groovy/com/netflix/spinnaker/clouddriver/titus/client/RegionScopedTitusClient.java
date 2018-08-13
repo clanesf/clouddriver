@@ -17,6 +17,7 @@
 package com.netflix.spinnaker.clouddriver.titus.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.protobuf.Empty;
 import com.netflix.frigga.Names;
 import com.netflix.spectator.api.Registry;
 import com.netflix.spinnaker.clouddriver.titus.TitusException;
@@ -226,17 +227,22 @@ public class RegionScopedTitusClient implements TitusClient {
   }
 
   private void killTaskWithRetry(String id, TerminateTasksAndShrinkJobRequest terminateTasksAndShrinkJob) {
-    try {
-      TitusClientAuthenticationUtil.attachCaller(grpcBlockingStub).killTask(TaskKillRequest.newBuilder().setTaskId(id).setShrink(terminateTasksAndShrinkJob.isShrink()).build());
-    } catch (io.grpc.StatusRuntimeException e) {
-      if (e.getStatus() == Status.NOT_FOUND) {
-        log.warn("Titus task {} not found, continuing with terminate tasks and shrink job request.", id);
-      } else {
-        retrySupport.retry(() ->
-            TitusClientAuthenticationUtil.attachCaller(grpcBlockingStub).killTask(TaskKillRequest.newBuilder().setTaskId(id).setShrink(terminateTasksAndShrinkJob.isShrink()).build())
-          , 2, 1000, false);
-      }
-    }
+      retrySupport.retry(() -> {
+        try {
+          return TitusClientAuthenticationUtil.attachCaller(grpcBlockingStub).killTask(
+            TaskKillRequest.newBuilder()
+              .setTaskId(id)
+              .setShrink(terminateTasksAndShrinkJob.isShrink())
+              .build()
+          );
+        } catch (io.grpc.StatusRuntimeException e) {
+          if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+            log.warn("Titus task {} not found, continuing with terminate tasks and shrink job request.", id);
+            return Empty.newBuilder().build();
+          }
+          throw e;
+        }
+    }, 3, 1000, false);
   }
 
   @Override
@@ -307,7 +313,7 @@ public class RegionScopedTitusClient implements TitusClient {
 
   @Override
   public Map<String, List<String>> getTaskIdsForJobIds() {
-    String filterByStates = "Accepted,Launched,StartInitiated,Started";
+    String filterByStates = "Launched,StartInitiated,Started";
 
     TaskQuery.Builder taskQueryBuilder = TaskQuery.newBuilder();
     taskQueryBuilder
@@ -328,7 +334,7 @@ public class RegionScopedTitusClient implements TitusClient {
     if (titusRegion.getFeatureFlags().contains("jobIds")) {
       taskQueryBuilder.putFilteringCriteria("attributes", "source:spinnaker");
     }
-    String filterByStates = "Accepted,Launched,StartInitiated,Started";
+    String filterByStates = "Launched,StartInitiated,Started";
     if (includeDoneJobs) {
       filterByStates = filterByStates + ",KillInitiated,Finished";
     }
@@ -342,7 +348,7 @@ public class RegionScopedTitusClient implements TitusClient {
   public List<Task> getAllTasks() {
     TaskQuery.Builder taskQueryBuilder = TaskQuery.newBuilder();
     taskQueryBuilder.putFilteringCriteria("attributes", "source:spinnaker");
-    String filterByStates = "Accepted,Launched,StartInitiated,Started";
+    String filterByStates = "Launched,StartInitiated,Started";
     taskQueryBuilder.putFilteringCriteria("taskStates", filterByStates);
 
     List<com.netflix.titus.grpc.protogen.Task> tasks = getTasksWithFilter(taskQueryBuilder);

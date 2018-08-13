@@ -127,7 +127,7 @@ class TitusDeployHandler implements DeployHandler<TitusDeployDescription> {
 
         description.runtimeLimitSecs = description.runtimeLimitSecs ?: sourceJob.runtimeLimitSecs
         description.securityGroups = description.securityGroups ?: sourceJob.securityGroups
-        description.imageId = description.imageId ?: (sourceJob.applicationName + ":" + sourceJob.version)
+        description.imageId = description.imageId ?: (sourceJob.applicationName + ":" + (sourceJob.version ?: sourceJob.digest))
 
         if (description.source.useSourceCapacity) {
           description.capacity.min = sourceJob.instancesMin
@@ -211,7 +211,6 @@ class TitusDeployHandler implements DeployHandler<TitusDeployDescription> {
       SubmitJobRequest submitJobRequest = new SubmitJobRequest()
         .withApplication(description.application)
         .withDockerImageName(dockerImage.imageName)
-        .withDockerImageVersion(dockerImage.imageVersion)
         .withInstancesMin(description.capacity.min)
         .withInstancesMax(description.capacity.max)
         .withInstancesDesired(description.capacity.desired)
@@ -236,6 +235,12 @@ class TitusDeployHandler implements DeployHandler<TitusDeployDescription> {
         .withMigrationPolicy(description.migrationPolicy)
         .withCredentials(description.credentials.name)
         .withContainerAttributes(description.containerAttributes.collectEntries { [(it.key): it.value?.toString()] })
+
+      if (dockerImage.imageDigest != null) {
+        submitJobRequest = submitJobRequest.withDockerDigest(dockerImage.imageDigest)
+      } else {
+        submitJobRequest = submitJobRequest.withDockerImageVersion(dockerImage.imageVersion)
+      }
 
       Set<String> securityGroups = []
       description.securityGroups?.each { providedSecurityGroup ->
@@ -272,7 +277,7 @@ class TitusDeployHandler implements DeployHandler<TitusDeployDescription> {
         }
       }
 
-      if (!description.hardConstraints?.contains(SubmitJobRequest.Constraint.ZONE_BALANCE) && !description.softConstraints?.contains(SubmitJobRequest.Constraint.ZONE_BALANCE)) {
+      if (description.getJobType() == "service" && !description.hardConstraints?.contains(SubmitJobRequest.Constraint.ZONE_BALANCE) && !description.softConstraints?.contains(SubmitJobRequest.Constraint.ZONE_BALANCE)) {
         submitJobRequest.withConstraint(SubmitJobRequest.Constraint.soft(SubmitJobRequest.Constraint.ZONE_BALANCE))
       }
 
@@ -321,8 +326,8 @@ class TitusDeployHandler implements DeployHandler<TitusDeployDescription> {
           jobUri = titusClient.submitJob(submitJobRequest)
         } catch (io.grpc.StatusRuntimeException e) {
           task.updateStatus BASE_PHASE, "Error encountered submitting job request to Titus ${e.message} for ${nextServerGroupName}"
-          if ((e.status.code == Status.RESOURCE_EXHAUSTED.code && e.status.description.contains("Constraint violation - job with group sequence")) || (e.status.code == Status.INVALID_ARGUMENT.code && e.status.description.contains("Job sequence id reserved by another pending job"))) {
-            if (e.status.code == Status.INVALID_ARGUMENT) {
+          if ((e.status.code == Status.RESOURCE_EXHAUSTED.code || e.status.code == Status.INVALID_ARGUMENT.code) && (e.status.description.contains("Job sequence id reserved by another pending job") || e.status.description.contains("Constraint violation - job with group sequence"))) {
+            if (e.status.description.contains("Job sequence id reserved by another pending job")) {
               sleep 1000 ^ pow(2, retryCount)
               retryCount++
             }
@@ -332,9 +337,12 @@ class TitusDeployHandler implements DeployHandler<TitusDeployDescription> {
           }
           if (e.status.code == Status.UNAVAILABLE.code) {
             throw e;
+          } else {
+            log.error("Could not submit job and not retrying for status ${e.status} ", e)
+            task.updateStatus BASE_PHASE, "could not submit job ${e.status} ${e.message}"
           }
         }
-      }, 12, 1000, false)
+      }, 8, 100, true)
 
       if (jobUri == null) {
         throw new TitusException("Could not create job")

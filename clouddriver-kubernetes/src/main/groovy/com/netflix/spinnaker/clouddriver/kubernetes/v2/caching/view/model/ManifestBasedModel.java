@@ -47,6 +47,10 @@ abstract public class ManifestBasedModel {
     return getManifest().getNamespace();
   }
 
+  public String getUid() {
+    return getManifest().getUid();
+  }
+
   public String getType() {
     return KubernetesCloudProvider.getID();
   }
@@ -85,7 +89,7 @@ abstract public class ManifestBasedModel {
     } catch (ParseException e) {
       log.warn("Failed to parse timestamp: ", e);
     }
-    
+
     return null;
   }
 

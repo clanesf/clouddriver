@@ -20,6 +20,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.Map;
 
@@ -29,6 +30,21 @@ import java.util.Map;
 @NoArgsConstructor
 public class LoadBalancerInstance {
   String id;
+  String name;
   String zone;
   Map<String, Object> health;
+
+  public LoadBalancerInstance(String id, String zone, Map<String, Object> health) {
+    this.id = id;
+    this.zone = zone;
+    this.health = health;
+  }
+
+  public String getName()  {
+    if (StringUtils.isEmpty(name)) {
+      return id;
+    } else {
+      return name;
+    }
+  }
 }

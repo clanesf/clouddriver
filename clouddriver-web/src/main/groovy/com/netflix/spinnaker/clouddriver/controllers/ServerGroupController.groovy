@@ -198,9 +198,9 @@ class ServerGroupController {
     }
 
     allIdTokens.collect { String[] idTokens ->
-      def (account, region, name) = idTokens
+      def (String account, String region, String name) = idTokens
       try {
-        def serverGroup = getServerGroup(account, region, name, true)
+        def serverGroup = getServerGroup(account, region, name, "true")
         return new ServerGroupViewModel(serverGroup, serverGroup.moniker.cluster, account)
       } catch (e) {
         log.error("Couldn't get server group ${idTokens.join(':')}", e)
@@ -294,6 +294,7 @@ class ServerGroupController {
 
   static class InstanceViewModel {
     String id
+    String name
     List<Map<String, Object>> health
     String healthState
     Long launchTime
@@ -301,6 +302,7 @@ class ServerGroupController {
 
     InstanceViewModel(Instance instance) {
       id = instance.name
+      name = instance.humanReadableName
       healthState = instance.getHealthState().toString()
       launchTime = instance.getLaunchTime()
       availabilityZone = instance.getZone()
